@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Calculadora de Subneteo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <!-- Encabezado institucional fijo -->
+  <div class="encabezado-fijo">
+    <p>Universidad Central del Ecuador</p>
+    <p>Infraestructura de TI - I</p>
+    <p>Esteban Narváez – 4to semestre</p>
+  </div>
+
+  <div class="contenedor">
+    <h1>Calculadora de Subneteo</h1>
+
+    <label for="ipInput">Dirección IP con máscara (ej: 192.168.1.0/24):</label>
+    <input type="text" id="ipInput" placeholder="Ej: 192.168.1.0/24" oninput="actualizarMaximos()" />
+
+    <label for="modoSubnets">Modo para subredes:</label>
+    <select id="modoSubnets" onchange="actualizarModos()">
+      <option value="manual">Manual</option>
+      <option value="auto">Automático</option>
+    </select>
+
+    <label for="subnetCount">Número de subredes deseadas:</label>
+    <input type="number" id="subnetCount" placeholder="Ej: 4" min="1" oninput="actualizarMaximos(); validarEntrada()" />
+    <div class="info-box" id="maxSubnetsInfo">Máx: -</div>
+
+    <label for="modoHosts">Modo para hosts por subred:</label>
+    <select id="modoHosts" onchange="actualizarModos()">
+      <option value="manual">Manual</option>
+      <option value="auto">Automático</option>
+    </select>
+
+    <label for="hostCount">Número de hosts por subred:</label>
+    <input type="number" id="hostCount" placeholder="Ej: 30" min="1" oninput="validarEntrada()" />
+    <div class="info-box" id="maxHostsInfo">Máx: -</div>
+
+    <button onclick="calcular()">Subnetear</button>
+
+    <div class="result">
+      <h3>Resultado:</h3>
+      <pre id="output">Introduce una IP con máscara y selecciona las opciones.</pre>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+
+</html>
