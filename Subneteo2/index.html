@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calculadora de Subneteo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body onload="actualizarModos()">
+
+  <div class="encabezado-fijo">
+    <p>Universidad Central del Ecuador</p>
+    <p>Infraestructura de TI - I</p>
+    <p>Esteban Narváez – 4to semestre</p>
+  </div>
+
+  <div class="contenedor">
+    <h1>Calculadora de Subneteo</h1>
+
+    <div class="seccion-config">
+      <label for="ipInput">Dirección IP con máscara:</label>
+      <input type="text" id="ipInput" placeholder="Ej: 192.168.1.0/24" oninput="actualizarMaximos()" />
+      <div class="texto-info">Formato: DirecciónIP/Máscara (ej: 192.168.1.0/24)</div>
+    </div>
+
+    <div class="seccion-config">
+      <label for="modoSubnets">Modo para subredes:</label>
+      <select id="modoSubnets" onchange="actualizarModos()">
+        <option value="manual">Manual</option>
+        <option value="auto">Automático</option>
+      </select>
+
+      <div id="subnetManualContainer">
+        <label for="subnetCount">Número de subredes deseadas:</label>
+        <input type="number" id="subnetCount" placeholder="Ej: 4" min="1"
+               oninput="actualizarMaximos(); validarEntrada()" />
+        <div class="texto-max" id="maxSubnetsInfo">Máx: -</div>
+      </div>
+
+      <div id="subnetAutoInfo" class="texto-info oculto">
+        El número de subredes se calculará automáticamente
+      </div>
+    </div>
+
+    <div class="seccion-config">
+      <label for="modoHosts">Modo para hosts por subred:</label>
+      <select id="modoHosts" onchange="actualizarModos()">
+        <option value="manual">Manual</option>
+        <option value="auto">Automático</option>
+        <option value="personalizado">Personalizado</option>
+      </select>
+
+      <div id="hostManualContainer">
+        <label for="hostCount">Número de hosts por subred:</label>
+        <input type="number" id="hostCount" placeholder="Ej: 30" min="1" oninput="validarEntrada()" />
+        <div class="texto-max" id="maxHostsInfo">Máx: -</div>
+      </div>
+
+      <div id="hostAutoInfo" class="texto-info oculto">
+        El número de hosts se calculará automáticamente
+      </div>
+
+      <div id="personalizadoContainer" class="oculto">
+        <div class="texto-info">Ingresa el número de hosts para cada subred</div>
+
+        <div id="spinnerControl">
+          <button type="button" onclick="cambiarSubred(-1)">◀</button>
+          <span id="subredActualLabel">Subred 1</span>
+          <button type="button" onclick="cambiarSubred(1)">▶</button>
+        </div>
+
+        <label for="hostPersonalizado">Hosts para esta subred:</label>
+        <input type="number" id="hostPersonalizado" placeholder="Ej: 10" min="1"
+               oninput="actualizarHostSubred()" />
+        <div class="texto-max" id="maxHostsPersonalizado">Máx: -</div>
+      </div>
+    </div>
+
+    <button type="button" onclick="calcular()">Subnetear</button>
+
+    <div class="result">
+      <h3>Resultados</h3>
+      <pre id="output">Introduce una IP con máscara y selecciona las opciones.</pre>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+  <script>
+    // Inicializa visibilidad de contenedores
+    function actualizarModos() {
+      const ms = document.getElementById('modoSubnets').value;
+      const mh = document.getElementById('modoHosts').value;
+
+      document.getElementById('subnetManualContainer').classList.toggle('oculto', ms !== 'manual');
+      document.getElementById('subnetAutoInfo').classList.toggle('oculto', ms !== 'auto');
+
+      document.getElementById('hostManualContainer').classList.toggle('oculto', mh !== 'manual');
+      document.getElementById('hostAutoInfo').classList.toggle('oculto', mh !== 'auto');
+      document.getElementById('personalizadoContainer').classList.toggle('oculto', mh !== 'personalizado');
+
+      if (mh === 'personalizado') generarSpinners();
+    }
+
+    window.addEventListener('DOMContentLoaded', actualizarModos);
+  </script>
+</body>
+</html>
