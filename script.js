@@ -1,3 +1,8 @@
+// Variables globales para modo personalizado
+let hostsPorSubred = [];
+let subredActual = 0;
+let maxHostsGlobal = 0;
+
 // Actualiza habilitación de inputs según selección manual/auto para subredes y hosts
 function actualizarModos() {
   const modoSubnets = document.getElementById("modoSubnets").value;
@@ -5,10 +10,14 @@ function actualizarModos() {
 
   const subnetField = document.getElementById("subnetCount");
   const hostField = document.getElementById("hostCount");
+  const personalizadoContainer = document.getElementById("personalizadoContainer");
+
+  // Manejar visibilidad del contenedor personalizado
+  personalizadoContainer.style.display = modoHosts === "personalizado" ? "block" : "none";
 
   // Deshabilitar si modo es automático
   subnetField.disabled = (modoSubnets === "auto");
-  hostField.disabled = (modoHosts === "auto");
+  hostField.disabled = (modoHosts === "manual" || modoHosts === "auto");
 
   subnetField.classList.toggle("disabled", subnetField.disabled);
   hostField.classList.toggle("disabled", hostField.disabled);
@@ -18,6 +27,11 @@ function actualizarModos() {
   if (hostField.disabled) hostField.value = "";
 
   actualizarMaximos();
+
+  // Inicializar modo personalizado si es necesario
+  if (modoHosts === "personalizado") {
+    generarSpinners();
+  }
 }
 
 // Actualiza los valores máximos permitidos y muestra info en pantalla
@@ -46,7 +60,7 @@ function actualizarMaximos() {
 
   const totalBits = 32 - mask;
   const maxSubnets = 2 ** totalBits;
-  const maxHosts = 2 ** totalBits - 2;
+  maxHostsGlobal = 2 ** totalBits - 2;
 
   if (modoSubnets === "manual") {
     maxSubnetsInfo.textContent = `Máx: ${maxSubnets}`;
@@ -55,25 +69,41 @@ function actualizarMaximos() {
   }
 
   if (modoHosts === "manual") {
-    maxHostsInfo.textContent = `Máx: ${maxHosts}`;
-  } else {
+    maxHostsInfo.textContent = `Máx: ${maxHostsGlobal}`;
+  } else if (modoHosts === "auto") {
     maxHostsInfo.textContent = "Modo automático";
+  } else {
+    maxHostsInfo.textContent = "Personalizado";
   }
+}
 
-  // Si modo subnets manual y valor ingresado, calcular máximo hosts posible
-  if (modoSubnets === "manual") {
-    const subnetCount = parseInt(document.getElementById("subnetCount").value) || 0;
-    if (subnetCount > 0) {
-      const bitsParaSubredes = Math.ceil(Math.log2(subnetCount));
-      const nuevaMascara = mask + bitsParaSubredes;
-      if (nuevaMascara <= 30) {
-        const hostsMaxPorSubnet = 2 ** (32 - nuevaMascara) - 2;
-        maxHostsInfo.textContent = `Máx: ${hostsMaxPorSubnet} (por subred con ${subnetCount} subredes)`;
-      } else {
-        maxHostsInfo.textContent = "No es posible";
-      }
-    }
+// Generar spinners para modo personalizado
+function generarSpinners() {
+  const subnetCount = parseInt(document.getElementById("subnetCount").value) || 0;
+  hostsPorSubred = new Array(subnetCount).fill(0);
+  subredActual = 0;
+
+  if (subnetCount > 0) {
+    document.getElementById("subredActualLabel").textContent = `Subred 1`;
+    document.getElementById("hostPersonalizado").value = "";
   }
+}
+
+// Cambiar subred actual en modo personalizado
+function cambiarSubred(delta) {
+  const subnetCount = hostsPorSubred.length;
+  if (subnetCount === 0) return;
+
+  subredActual = (subredActual + delta + subnetCount) % subnetCount;
+
+  document.getElementById("subredActualLabel").textContent = `Subred ${subredActual + 1}`;
+  document.getElementById("hostPersonalizado").value = hostsPorSubred[subredActual];
+}
+
+// Actualizar valor de hosts para subred actual
+function actualizarHostSubred() {
+  const valor = parseInt(document.getElementById("hostPersonalizado").value) || 0;
+  hostsPorSubred[subredActual] = Math.max(valor, 0);
 }
 
 // Validar entradas para evitar números fuera de rango
@@ -136,13 +166,109 @@ function calcular() {
   result += `  Broadcast: ${intToIp(broadcast)}\n`;
   result += `  Hosts posibles: ${totalBlockSize - 2}\n`;
 
+  // Modo personalizado (hosts variables por subred - VLSM)
+  if (modoHosts === "personalizado") {
+    const subnetCount = parseInt(document.getElementById("subnetCount").value);
+    if (!subnetCount || subnetCount < 1) {
+      output.textContent = "Error: Ingresa un número válido de subredes.";
+      return;
+    }
+
+    // Verificar que todos los valores sean válidos
+    if (hostsPorSubred.length !== subnetCount || hostsPorSubred.some(h => isNaN(h) || h < 0)) {
+      output.textContent = "Error: Ingresa valores válidos de hosts para todas las subredes.";
+      return;
+    }
+
+    // Crear array de subredes con información necesaria
+    let subnets = hostsPorSubred.map((hosts, index) => ({
+      originalIndex: index,
+      hosts: hosts,
+      blockSize: Math.pow(2, Math.ceil(Math.log2(hosts + 2)))  // Tamaño de bloque mínimo requerido
+    }));
+
+    // Ordenar subredes por tamaño de bloque (descendente)
+    subnets.sort((a, b) => b.blockSize - a.blockSize);
+
+    const originalEnd = networkInt + totalBlockSize - 1;
+    let freeRanges = [[networkInt, originalEnd]];  // Rangos libres disponibles
+    let error = false;
+
+    // Asignar direcciones a cada subred
+    for (let subnet of subnets) {
+      let assigned = false;
+
+      for (let i = 0; i < freeRanges.length; i++) {
+        const [start, end] = freeRanges[i];
+        const rangeSize = end - start + 1;
+
+        // Saltar si el rango es demasiado pequeño
+        if (rangeSize < subnet.blockSize) continue;
+
+        // Calcular inicio alineado (múltiplo del tamaño de bloque)
+        const alignedStart = Math.ceil(start / subnet.blockSize) * subnet.blockSize;
+
+        // Verificar si cabe en el rango actual
+        if (alignedStart >= start && (alignedStart + subnet.blockSize - 1) <= end) {
+          // Asignar subred
+          subnet.base = alignedStart;
+          subnet.broadcast = alignedStart + subnet.blockSize - 1;
+          subnet.mask = 32 - Math.log2(subnet.blockSize);
+
+          // Actualizar rangos libres
+          freeRanges.splice(i, 1);  // Eliminar rango actual
+
+          // Agregar nuevo rango izquierdo si hay espacio
+          if (alignedStart > start) {
+            freeRanges.push([start, alignedStart - 1]);
+          }
+
+          // Agregar nuevo rango derecho si hay espacio
+          if (subnet.broadcast < end) {
+            freeRanges.push([subnet.broadcast + 1, end]);
+          }
+
+          assigned = true;
+          break;
+        }
+      }
+
+      if (!assigned) {
+        output.textContent = `Error: No hay espacio para la subred ${subnet.originalIndex+1} (requiere ${subnet.hosts} hosts).`;
+        error = true;
+        break;
+      }
+    }
+
+    if (error) return;
+
+    // Ordenar subredes por índice original para mostrar
+    subnets.sort((a, b) => a.originalIndex - b.originalIndex);
+
+    result += `\n--- Cálculo con hosts personalizados (VLSM) ---\n`;
+    for (let subnet of subnets) {
+      const startHost = subnet.base + 1;
+      const endHost = subnet.broadcast - 1;
+      const hostsDisponibles = subnet.blockSize - 2;
+
+      result += `Subred ${subnet.originalIndex + 1} (${subnet.hosts} hosts, máscara /${subnet.mask}):\n`;
+      result += `  Dirección de red: ${intToIp(subnet.base)}\n`;
+      result += `  Broadcast: ${intToIp(subnet.broadcast)}\n`;
+      result += `  Rango de hosts: ${intToIp(startHost)} - ${intToIp(endHost)}\n`;
+      result += `  Hosts disponibles: ${hostsDisponibles}\n\n`;
+    }
+
+    output.textContent = result;
+    return;
+  }
+
   // Caso 1: ambos automáticos => cálculo eficiente maximizando subredes y hosts
   if (modoSubnets === "auto" && modoHosts === "auto") {
     const totalBits = 32 - mask;
     let mejorBitsSubnets = 0;
     let mejorBitsHosts = 0;
 
-    // Priorizar la máxima cantidad de subredes: bitsSubnets crece desde totalBits-1 hacia 1
+    // Priorizar la máxima cantidad de subredes
     for (let bitsSubnets = totalBits - 1; bitsSubnets >= 1; bitsSubnets--) {
       let bitsHosts = totalBits - bitsSubnets;
       let hostsPorSubnet = (2 ** bitsHosts) - 2;
@@ -152,7 +278,7 @@ function calcular() {
       let nuevaMask = mask + bitsSubnets;
       if (nuevaMask > 30) continue;
 
-      // Tomamos la primera combinación que cumpla (más subredes posibles)
+      // Tomamos la primera combinación que cumpla
       mejorBitsSubnets = bitsSubnets;
       mejorBitsHosts = bitsHosts;
       break;
@@ -168,7 +294,6 @@ function calcular() {
     const numSubnets = 2 ** mejorBitsSubnets;
     const hostsPerSubnet = blockSize - 2;
 
-    let result = `Red original: ${ipStr}/${mask} (${intToIp(maskInt)})\n`;
     result += `\n--- Cálculo eficiente priorizando máximo número de subredes ---\n`;
     result += `Máscara usada: /${nuevaMask} (${intToIp(maskToInt(nuevaMask))})\n`;
     result += `Número de subredes: ${numSubnets}\n`;
@@ -191,7 +316,6 @@ function calcular() {
     return;
   }
 
-
   // Caso 2: modo subredes manual, hosts automático
   if (modoSubnets === "manual" && modoHosts === "auto") {
     const subnetCount = parseInt(document.getElementById("subnetCount").value);
@@ -213,10 +337,11 @@ function calcular() {
 
     result += `\n--- Cálculo manual subredes ---\n`;
     result += `Máscara usada: /${nuevaMask} (${intToIp(maskToInt(nuevaMask))})\n`;
-    result += `Número de subredes: ${numSubnets}\nHosts por subred (automático): ${hostsPerSubnet}\n\n`;
-    result += `Subredes:\n`;
+    result += `Número de subredes creadas: ${numSubnets}\n`;
+    result += `Hosts por subred (automático): ${hostsPerSubnet}\n`;
+    result += `Subredes utilizadas (${subnetCount} de ${numSubnets}):\n\n`;
 
-    for (let i = 0; i < numSubnets; i++) {
+    for (let i = 0; i < subnetCount; i++) {
       const subnetBase = networkInt + i * blockSize;
       const subnetBroadcast = subnetBase + blockSize - 1;
       const subnetStart = subnetBase + 1;
@@ -226,6 +351,11 @@ function calcular() {
       result += `  Dirección de red: ${intToIp(subnetBase)}\n`;
       result += `  Broadcast: ${intToIp(subnetBroadcast)}\n`;
       result += `  Rango de hosts: ${intToIp(subnetStart)} - ${intToIp(subnetEnd)}\n\n`;
+    }
+
+    // Mostrar subredes no utilizadas si las hay
+    if (numSubnets > subnetCount) {
+      result += `Subredes adicionales disponibles: ${numSubnets - subnetCount}\n`;
     }
 
     output.textContent = result;
@@ -273,7 +403,7 @@ function calcular() {
     return;
   }
 
-  // Caso 4: ambos manuales
+  // Caso 4: ambos manuales (MODO MANUAL CON HOSTS FIJOS - CORREGIDO)
   if (modoSubnets === "manual" && modoHosts === "manual") {
     const subnetCount = parseInt(document.getElementById("subnetCount").value);
     const hostCount = parseInt(document.getElementById("hostCount").value);
@@ -287,37 +417,49 @@ function calcular() {
       return;
     }
 
-    const bitsParaSubredes = Math.ceil(Math.log2(subnetCount));
-    const bitsParaHosts = Math.ceil(Math.log2(hostCount + 2));
-    const nuevaMaskSubnets = mask + bitsParaSubredes;
-    const nuevaMaskHosts = 32 - bitsParaHosts;
+    // Calcular bits necesarios para hosts
+    const bitsHosts = Math.ceil(Math.log2(hostCount + 2));
+    const bitsSubredes = Math.ceil(Math.log2(subnetCount));
+    const totalBitsNeeded = bitsHosts + bitsSubredes;
+    const bitsDisponibles = 32 - mask;
 
-    if (nuevaMaskSubnets > 30) {
-      output.textContent = "No es posible crear tantas subredes con esa red base.";
+    // Verificar si hay suficientes bits disponibles
+    if (totalBitsNeeded > bitsDisponibles) {
+      output.textContent = "Error: Bits insuficientes para crear las subredes con los hosts solicitados.";
       return;
     }
-    if (nuevaMaskHosts < mask) {
-      output.textContent = "No es posible asignar tantos hosts con esa red base.";
-      return;
-    }
 
-    const nuevaMask = Math.max(nuevaMaskSubnets, nuevaMaskHosts);
-
-    const blockSize = 2 ** (32 - nuevaMask);
-    const numSubnets = 2 ** (nuevaMask - mask);
+    // Calcular nueva máscara y tamaño de bloque
+    const nuevaMask = 32 - bitsHosts;
+    const blockSize = 2 ** bitsHosts;
     const hostsPerSubnet = blockSize - 2;
+    const numSubnets = 2 ** bitsSubredes;
 
-    if (hostsPerSubnet < hostCount) {
-      output.textContent = "No es posible crear subredes con los hosts por subred indicados.";
+    // Verificar que la nueva máscara sea válida
+    if (nuevaMask < mask || nuevaMask > 30) {
+      output.textContent = "Error: Máscara resultante inválida.";
       return;
     }
 
-    result += `\n--- Cálculo manual completo ---\n`;
-    result += `Máscara usada: /${nuevaMask} (${intToIp(maskToInt(nuevaMask))})\n`;
-    result += `Número de subredes: ${numSubnets}\nHosts por subred: ${hostsPerSubnet}\n\n`;
-    result += `Subredes:\n`;
+    // Calcular desperdicio
+    const desperdicio = (numSubnets - subnetCount) * blockSize;
 
-    for (let i = 0; i < numSubnets; i++) {
+    result += `\n--- Cálculo manual completo (CORREGIDO) ---\n`;
+    result += `Máscara usada: /${nuevaMask} (${intToIp(maskToInt(nuevaMask))})\n`;
+    result += `Tamaño de bloque: ${blockSize} direcciones (${bitsHosts} bits para hosts)\n`;
+    result += `Hosts por subred: ${hostsPerSubnet} (solicitados: ${hostCount})\n`;
+    result += `Bits para subredes: ${bitsSubredes}\n`;
+    result += `Subredes totales posibles: ${numSubnets}\n`;
+    result += `Subredes utilizadas: ${subnetCount}\n`;
+
+    if (numSubnets > subnetCount) {
+      result += `Subredes disponibles: ${numSubnets - subnetCount}\n`;
+      result += `Direcciones reservadas: ${desperdicio}\n`;
+    }
+
+    result += `\nSubredes utilizadas:\n`;
+
+    for (let i = 0; i < subnetCount; i++) {
       const subnetBase = networkInt + i * blockSize;
       const subnetBroadcast = subnetBase + blockSize - 1;
       const subnetStart = subnetBase + 1;
@@ -326,7 +468,8 @@ function calcular() {
       result += `Subred ${i + 1}:\n`;
       result += `  Dirección de red: ${intToIp(subnetBase)}\n`;
       result += `  Broadcast: ${intToIp(subnetBroadcast)}\n`;
-      result += `  Rango de hosts: ${intToIp(subnetStart)} - ${intToIp(subnetEnd)}\n\n`;
+      result += `  Rango de hosts: ${intToIp(subnetStart)} - ${intToIp(subnetEnd)}\n`;
+      result += `  Hosts disponibles: ${hostsPerSubnet}\n\n`;
     }
 
     output.textContent = result;
@@ -360,4 +503,3 @@ function validarIp(ip) {
     return !isNaN(n) && n >= 0 && n <= 255;
   });
 }
-
